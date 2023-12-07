@@ -5,6 +5,8 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
+import android.content.Context;
+import android.graphics.Canvas;
 import android.view.View;
 import android.view.ViewPropertyAnimator;
 import android.view.animation.Interpolator;
@@ -21,12 +23,12 @@ import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.SharedConfig;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.BotHelpCell;
-import org.telegram.ui.Cells.ChatActionCell;
 import org.telegram.ui.Cells.ChatMessageCell;
 import org.telegram.ui.ChatActivity;
 import org.telegram.ui.Components.ChatGreetingsView;
 import org.telegram.ui.Components.CubicBezierInterpolator;
 import org.telegram.ui.Components.RecyclerListView;
+import org.telegram.ui.Components.spoilers.SpoilerEffect2;
 import org.telegram.ui.TextMessageEnterTransition;
 import org.telegram.ui.VoiceMessageEnterTransition;
 
@@ -38,6 +40,10 @@ import java.util.List;
 public class ChatListItemAnimator extends DefaultItemAnimator {
 
     public static final long DEFAULT_DURATION = 250;
+    public static final long DEFAULT_REMOVAL_MOVE_DURATION = 1000;
+    public static final long DEFAULT_REMOVE_DURATION = 4000;
+
+    private boolean isRemoving = false;
     public static final Interpolator DEFAULT_INTERPOLATOR = new CubicBezierInterpolator(0.19919472913616398, 0.010644531250000006, 0.27920937042459737, 0.91025390625);
 
     private final ChatActivity activity;
@@ -65,6 +71,7 @@ public class ChatListItemAnimator extends DefaultItemAnimator {
         translationInterpolator = DEFAULT_INTERPOLATOR;
         alwaysCreateMoveAnimationIfPossible = true;
         setSupportsChangeAnimations(false);
+        setRemoveDuration(DEFAULT_REMOVE_DURATION);
     }
 
     @Override
@@ -964,30 +971,30 @@ public class ChatListItemAnimator extends DefaultItemAnimator {
             mChangeAnimations.add(changeInfo.newHolder);
             newViewAnimation.translationX(0).translationY(0).setDuration(getChangeDuration())
                     .alpha(1).setListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationStart(Animator animator) {
-                    dispatchChangeStarting(changeInfo.newHolder, false);
-                }
+                        @Override
+                        public void onAnimationStart(Animator animator) {
+                            dispatchChangeStarting(changeInfo.newHolder, false);
+                        }
 
-                @Override
-                public void onAnimationEnd(Animator animator) {
-                    newViewAnimation.setListener(null);
-                    newView.setAlpha(1);
-                    newView.setScaleX(1f);
-                    newView.setScaleX(1f);
-                    if (newView instanceof ChatMessageCell) {
-                        ((ChatMessageCell) newView).setAnimationOffsetX(0);
-                    } else {
-                        newView.setTranslationX(0);
-                    }
-                    newView.setTranslationY(0);
+                        @Override
+                        public void onAnimationEnd(Animator animator) {
+                            newViewAnimation.setListener(null);
+                            newView.setAlpha(1);
+                            newView.setScaleX(1f);
+                            newView.setScaleX(1f);
+                            if (newView instanceof ChatMessageCell) {
+                                ((ChatMessageCell) newView).setAnimationOffsetX(0);
+                            } else {
+                                newView.setTranslationX(0);
+                            }
+                            newView.setTranslationY(0);
 
-                    if (mChangeAnimations.remove(changeInfo.newHolder)) {
-                        dispatchChangeFinished(changeInfo.newHolder, false);
-                        dispatchFinishedWhenDone();
-                    }
-                }
-            }).start();
+                            if (mChangeAnimations.remove(changeInfo.newHolder)) {
+                                dispatchChangeFinished(changeInfo.newHolder, false);
+                                dispatchFinishedWhenDone();
+                            }
+                        }
+                    }).start();
         }
     }
 
@@ -1376,9 +1383,11 @@ public class ChatListItemAnimator extends DefaultItemAnimator {
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("animate remove impl");
         }
+
         final View view = holder.itemView;
+
         mRemoveAnimations.add(holder);
-        ObjectAnimator animator = ObjectAnimator.ofFloat(view, View.ALPHA, view.getAlpha(), 0f);
+        ObjectAnimator animator = ObjectAnimator.ofFloat(view, View.ALPHA, view.getAlpha(), 1f);
 
         dispatchRemoveStarting(holder);
 
@@ -1387,7 +1396,17 @@ public class ChatListItemAnimator extends DefaultItemAnimator {
                 new AnimatorListenerAdapter() {
 
                     @Override
+                    public void onAnimationStart(Animator animation) {
+                        isRemoving = true;
+                        if (view instanceof ChatMessageCell){
+                            ((ChatMessageCell)view).startRemovalAnimation();
+                        }
+                        super.onAnimationStart(animation);
+                    }
+
+                    @Override
                     public void onAnimationEnd(Animator animator) {
+                        isRemoving = false;
                         animator.removeAllListeners();
                         view.setAlpha(1);
                         view.setScaleX(1f);
@@ -1419,7 +1438,11 @@ public class ChatListItemAnimator extends DefaultItemAnimator {
 
     @Override
     public long getMoveDuration() {
-        return DEFAULT_DURATION;
+        if (isRemoving){
+            return DEFAULT_REMOVAL_MOVE_DURATION;
+        } else {
+            return DEFAULT_DURATION;
+        }
     }
 
     @Override
@@ -1501,6 +1524,26 @@ public class ChatListItemAnimator extends DefaultItemAnimator {
         float imageHeight;
         int captionX;
         int captionY;
+    }
+
+    private class SandView extends ChatMessageCell {
+        SpoilerEffect2 spoilerEffect = SpoilerEffect2.getInstance(this);
+
+        public SandView(Context context) {
+            super(context);
+            spoilerEffect.attach(this);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            spoilerEffect.draw(canvas, this);
+        }
+
+        public void updateDrawingParameters() {
+            invalidate();
+        }
+
     }
 }
 
